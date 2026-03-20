@@ -14,20 +14,6 @@ int is_prism_punct(char c) {
     return (c == '.' || c == ',' || c == '!' || c == '?' || c == '-');
 }
 
-// Set an edge in a uint32_t array
-static void set_edge(uint32_t *arr, size_t edge_idx, int from, int to) {
-    size_t bit_pos = edge_idx * EDGE_BITS;
-    uint32_t val = ((from & 0x1F) << 5) | (to & 0x1F);
-
-    for (int i = 0; i < 10; i++) {
-        if ((val >> i) & 1) {
-            size_t curr_bit = bit_pos + i;
-            arr[curr_bit / 32] |= (1U << (curr_bit % 32));
-        }
-    }
-}
-
-
 // Get an edge from a uint32_t array
 static void get_edge(uint32_t *arr, size_t edge_idx, int *from, int *to) {
     size_t bit_pos = edge_idx * EDGE_BITS;

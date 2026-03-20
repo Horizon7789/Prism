@@ -59,9 +59,9 @@ typedef struct {
 
 
 typedef struct {
-    uint8_t start_letter; // Explicitly store 'a', 'b', etc.
+    uint32_t start_letter; // Explicitly store 'a', 'b', etc.
     uint32_t num_edges;
-    uint16_t *edges;
+    uint32_t *edges;
 } WordEdges;
 
 
@@ -120,7 +120,7 @@ typedef struct TransitionNode {
     struct TransitionNode *next;   // Next transition in the list
 } TransitionNode;
 
-typedef struct {
+typedef struct StructuralEntry {
     uint32_t source_id;            // The ID of the current word
     TransitionNode *transitions;   // Head of the list of following words
     uint32_t total_occurrences;    // Sum of all transition frequencies
@@ -138,7 +138,6 @@ extern StructuralEntry* get_structural_entry(uint32_t source_id);
 
 /* Function Definition*/
 
-static size_t web_write_cb(void *ptr, size_t sz, size_t n, void *ud);
 void handle_query(const char *input);
 
 void print_banner(void);
@@ -152,13 +151,6 @@ static inline int letter_to_index(char c);
 
 // Convert index 0-25 back to a letter 'a'-'z'
 static inline char index_to_letter(int idx);
-
-// Set an edge in the bit-packed array
-static void set_edge(uint32_t *arr, size_t edge_idx, int from, int to);
-
-// Get an edge from the bit-packed array
-static void get_edge(uint32_t *arr, size_t edge_idx, int *from, int *to);
-
 
 /* =========================
    1. Encode word into edges

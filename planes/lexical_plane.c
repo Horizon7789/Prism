@@ -408,8 +408,6 @@ void prune_structural_noise() {
 
 
 void debug_show_phrases(void) {
-    int np_count = 0;
-    int adjp_count = 0;
     const int MIN_STRENGTH = 2; // Only show patterns seen 2+ times
 
     printf(BOLD "\n--- PRISM: Structural Growth Map (Strength > 1) ---" RESET "\n");
@@ -446,7 +444,7 @@ void debug_show_phrases(void) {
                             char *noun_str = get_word_by_id(n->target_id);
                             printf(CYAN "  [ADJ-P] " RESET "%-5s %-15s %-15s (Str: %d)\n", 
                                    det_str, next_str, noun_str, n->frequency);
-                            adjp_count++;
+                            
                             if (noun_str) free(noun_str);
                         }
                         n = n->next;
@@ -454,7 +452,7 @@ void debug_show_phrases(void) {
                 }
             } else if (next_mask & POS_NOUN) {
                 printf(GREEN "  [NP]    " RESET "%-5s %-15s (Str: %d)\n", det_str, next_str, t->frequency);
-                np_count++;
+                
             }
 
             if (next_str) free(next_str);

@@ -2,11 +2,23 @@
 # PRISM Makefile — Modular Build
 # =========================================
 
+# Automatically run setup if libcurl isn't found
+CHECK_CURL := $(shell pkg-config --exists libcurl || echo "missing")
+
+all: check_deps $(TARGET)
+
+check_deps:
+ifeq ($(CHECK_CURL),missing)
+	@echo "Dependencies missing. Running setup.sh..."
+	@chmod +x setup.sh && ./setup.sh
+endif
+
+
 # Compiler
 # Compiler
 CC = gcc
 
-CFLAGS = -Wall -Wextra -O2 -g -std=c11 -DWEB -U_FORTIFY_SOURCE
+CFLAGS = -Wall -Wextra -O2 -g -std=c11 -D_GNU_SOURCE -DWEB -U_FORTIFY_SOURCE
 
 LIBS = -lcurl -ljson-c
 

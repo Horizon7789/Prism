@@ -1,3 +1,6 @@
+![Build Status](https://github.com/Horizon7789/Prism/actions/workflows/build.yml/badge.svg)
+
+
 ** PRISM — Precise Reasoning & Intelligent Symbolic Matrix **
 
 ## Deterministic Intelligence System: Full Technical Blueprint

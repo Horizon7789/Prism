@@ -15,8 +15,6 @@ typedef struct {
     uint16_t mask;   // upgraded to 16-bit (we now exceed 8 categories)
 } FiniteEntry;
 
-
-
 typedef struct {
     uint16_t flag;
     const char *name;

@@ -7,11 +7,11 @@
 #include "prism.h"
 
 #define MAX_MEMORY_MB 500 
-
+    
 // Global Pool State
 
 CompactNode *trie_pool = NULL;
-uint32_t pool_size = 1000000;
+uint32_t pool_size = 1000000000;
 uint32_t nodes_count = 1;
 
 uint32_t free_slots[MAX_FREE_SLOTS];
@@ -61,7 +61,7 @@ void print_banner(void) {
         "║  ────────────────────────────────────────────────────────────────────  ║\n"
         "║  exit / quit        → Shutdown PRISM (with save option)                ║\n"
         "║                                                                        ║\n"
-        "║  Version: %d.0  |  Offline Reasoning  |  Deterministic AI Core         ║\n"
+        "║  Version: %1f.0  |  Offline Reasoning  |  Deterministic AI Core         ║\n"
         "╚════════════════════════════════════════════════════════════════════════╝\n"
         RESET, PRISM_VERSION);
 }
@@ -454,6 +454,7 @@ void print_stats(void) {
     uint32_t active_nodes = nodes_count - free_ptr; // Real density
     printf("--- PRISM Matrix Statistics ---\n");
     printf(BLUE "[Memory Pool]\n" RESET);
+    printf("  Bytes Used/Allocated: %zu / %zu\n", bytes_used, bytes_allocated);
     printf("  Nodes (Active/Total): %u / %u\n", active_nodes, nodes_count);
     printf("  Recycle Bin:          %u slots available\n", free_ptr);
     printf("  Memory Usage:         %.2f MB / %.2f MB\n", 
@@ -480,17 +481,6 @@ void print_stats(void) {
 
     printf("-------------------------------\n");
 }
-
-/*printf("  History Items (Words): " CYAN "%u" RESET "\n", history_items);
-    printf("  Total Packed Edges:    " CYAN "%u" RESET "\n", total_edges);
-    if (file_size < 1024 * 1024) {
-    printf("  Disk Size:        " GREEN "%.2f KB" RESET "\n", (double)file_size / 1024);
-} else {
-    printf("  Disk Size:        " GREEN "%.2f MB" RESET "\n", (double)file_size / (1024 * 1024));
-}
-
-    printf("-------------------------------\n");
-}*/
 
 void print_all_words_recursive(uint32_t node_idx, char *buffer, int depth) {
     if (node_idx == 0 || node_idx >= nodes_count) return;
