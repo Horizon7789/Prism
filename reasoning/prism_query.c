@@ -103,65 +103,6 @@ static char* fetch_wikipedia(const char *subject) {
    in the deterministic trie
    ========================================= */
 
-void handle_query(const char *input) {
-    // 1. Fetch Wikipedia summary
-    void reset_pos_planes();
-    char *web_facts = fetch_wikipedia(input);
-    
-     if (!web_facts) {
-        printf(RED "Error: Failed to retrieve information for: %s" RESET "\n", input);
-        return;
-    }
-    
-    printf("\n--- Wikipedia Summary ---\n%s\n\n", web_facts);
-
-    // 2. Split into words
-    size_t wc = 0;
-    char **words = split_sentence(web_facts, &wc);
-    free(web_facts); 
-
-    if (!words || wc == 0) return;
-
-    // 3. Allocate and FILL the id_buffer
-    uint32_t *id_buffer = malloc(wc * sizeof(uint32_t));
-    if (!id_buffer) { /* cleanup words */ return; }
-
-    for (size_t i = 0; i < wc; i++) {
-        // insert_word MUST increment a global nodes_count internally
-        id_buffer[i] = insert_word(words[i]); 
-        free(words[i]); 
-    }
-    free(words);
-
-    // 4. THE MULTI-PLANE TRAINING
-    // If you don't call this, the co-occurrence links and PoS masks stay at 0
-    train_prism_planes(id_buffer, wc, 0); 
-    prune_structural_noise();
-
-    // 5. Persistence & INTERNAL SYNC (The Missing Step)
-    save_trie("lexical_trie.bin");
-    
-    FILE *f = fopen("packed_edges.bin", "ab"); 
-    if (f) {
-        fwrite(id_buffer, sizeof(uint32_t), wc, f);
-        fclose(f);
-    }
-    
-    // CRITICAL: You must rebuild the structural matrix 
-    // to include the newly added words/transitions
-    // Instead of re-reading the whole file, just train the new edges
-    for (size_t i = 0; i < wc - 1; i++) {
-        record_transition(id_buffer[i], id_buffer[i+1]);
-    }
-
-    analyze_structure(); 
-    
-    free(id_buffer);
-    printf(GREEN "Success: PRISM processed %zu tokens." RESET "\n", wc);
-}
-
-
-
 
 void seed_prism_vocabulary(void) {
     const char *vocab[] = {
@@ -208,8 +149,7 @@ void seed_prism_vocabulary(void) {
     printf("PRISM: Seeding %d core tokens...\n", total);
 
     for (int i = 0; i < total; i++) {
-        // Replace 'learn_word' with your actual insertion function name
-        handle_query(vocab[i]); 
+        insert_word(vocab[i]);
     }
 
     printf("Success: PRISM core vocabulary initialized.\n");

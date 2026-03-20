@@ -170,6 +170,23 @@ int main(void) {
             print_structural_patterns(input + 10);
             continue;
         }
+        
+        else if (strncmp(input, "crawl ", 6) == 0) {
+    char topic[128]; int secs = 300;
+    if (sscanf(input + 6, "%127[^ ] %d", topic, &secs) < 1)
+        strncpy(topic, input + 6, 127);
+    deep_crawl(topic, secs);
+    break;
+}
+else if (strncmp(input, "train file ", 11) == 0) {
+    train_from_file(input + 11);
+    save_trie("lexical_trie.bin");
+    break;
+}
+else if (strncmp(input, "train text ", 11) == 0) {
+    train_from_string(input + 11);
+    break;
+}
 
         else if (!strcmp(input, "phrases")) {
             debug_show_phrases();

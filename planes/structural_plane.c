@@ -173,63 +173,7 @@ void train_structural_plane(uint32_t *ids, size_t count) {
     printf(GREEN "PRISM trained Successfully" RESET);
 }
 
-
-uint32_t predict_next_id(uint32_t current_id, uint32_t subject_id) {
-    uint32_t slot = hash_id(current_id);
-    StructuralEntry *entry = structural_matrix[slot];
-
-    if (!entry || entry->source_id != current_id || !entry->transitions) return 0;
-
-    uint32_t best_id = 0;
-    float max_score = -1.0f;
-
-    uint16_t prev_mask = trie_pool[current_id].pos_mask;
-    TransitionNode *curr = entry->transitions;
-
-    while (curr) {
-        uint32_t candidate_id = curr->target_id;
-        uint16_t curr_mask = trie_pool[candidate_id].pos_mask;
-
-        // 1. Structural Score (Frequency normalized against total)
-        float s_score = (float)curr->frequency / entry->total_occurrences;
-
-        // 2. Grammar Score (How likely is this PoS transition?)
-        float g_score = 0.0f;
-        int active_tags = 0;
-        for (int i = 0; i < 16; i++) {
-            if (prev_mask & (1 << i)) {
-                for (int j = 0; j < 16; j++) {
-                    if (curr_mask & (1 << j)) {
-                        // Look up the transition strength in your 16x16 matrix
-                        g_score += grammar_matrix[i][j];
-                        active_tags++;
-                    }
-                }
-            }
-        }
-        if (active_tags > 0) g_score /= active_tags; // Simple normalization
-
-        // 3. Contextual Relevance (The "Hallucination Killer")
-        float c_score = get_contextual_relevance(candidate_id, subject_id);
-
-        // Final Weighted Consensus
-        float total_score = (s_score * WEIGHT_STRUCTURAL) + 
-                            (g_score * WEIGHT_GRAMMAR) + 
-                            (c_score * WEIGHT_CONTEXT);
-
-        if (total_score > max_score) {
-            max_score = total_score;
-            best_id = candidate_id;
-        }
-        curr = curr->next;
-    }
-
-    return best_id;
-}
-
-
-
-void generate_multi_sentence(const char *seed, int target_sentences) {
+/* void generate_multi_sentence(const char *seed, int target_sentences) {
     uint32_t seed_id = insert_word(seed); 
     if (seed_id == 0) {
         printf(RED "PRISM: Seed word not found." RESET "\n");
@@ -273,6 +217,8 @@ void generate_multi_sentence(const char *seed, int target_sentences) {
     }
     printf("\n");
 }
+
+*/
 
 
 void replay_with_structure(uint32_t *history_ids, size_t count) {

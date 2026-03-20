@@ -229,16 +229,15 @@ char** decode_words_from_file(const char *filename, size_t *out_count);
 
 int check_greetings(const char *input);
 
+int   train_from_string(const char *text);
+int   train_from_file  (const char *filepath);
+void  deep_crawl       (const char *seed_topic, int seconds);
 
 // Global Pool Access
 extern CompactNode *trie_pool;
 extern uint32_t nodes_count;
 extern uint32_t pool_size;
 
-// Function Prototypes
-void print_banner(void);
-void init_trie(void);
-uint32_t insert_word(const char *word);
 int find_word(const char *word);
 char* decode_word(const char *word);
 
@@ -260,8 +259,6 @@ char* reconstruct_word_from_edges(WordEdges *we, char start_letter);
 void replay_history(int limit);
 void replay_specific(const char *target_word);
 
-// Inserts a word and returns the unique Node ID (index in trie_pool)
-uint32_t insert_word(const char *word);
 
 // Climbs the Trie from a leaf ID to the root to reconstruct the string
 char* get_word_by_id(uint32_t node_idx);
@@ -272,7 +269,7 @@ char idx_to_char(uint8_t idx);
 // Helper to convert characters to safe indices (0-63 range)
 uint8_t char_to_idx(char c);
 
-void append_history_ids(uint32_t *ids, size_t count);
+void append_history(uint32_t *node_ids, size_t count);
 
 extern StructuralEntry *structural_matrix[STRUCTURAL_BUCKETS];
 

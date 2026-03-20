@@ -356,10 +356,7 @@ void force_re_lock_lexicon() {
         if (id > 0 && id < nodes_count) {
             // Apply the intended Role + the Hard Lock bit
             trie_pool[id].pos_mask = finite_list[i].mask | POS_LOCKED;
-            
-            // Wipe out any previous training "noise" (0x0105 -> 0x8100)
-            printf(YELLOW "PRISM: Re-locked '%s' to mask 0x%04X" RESET "\n", 
-                   finite_list[i].word, trie_pool[id].pos_mask);
+
         }
     }
 }
@@ -468,9 +465,7 @@ void debug_show_phrases(void) {
 }
 
 
-
-// A 16x16 matrix to store transitions between PoS categories
-uint32_t grammar_matrix[16][16]; 
+uint32_t grammar_matrix[16][16] = {0};
 
 void record_grammar_path(uint16_t prev_mask, uint16_t curr_mask) {
     for (int i = 0; i < 16; i++) {
