@@ -5,6 +5,8 @@
    
 #include "prism.h"
 
+#define DEBUG_LEXICAL 1   // toggle your debug
+
 POSMap pos_map[] = {
     {POS_NOUN,  "Noun"},
     {POS_VERB,  "Verb"},
@@ -347,7 +349,6 @@ void apply_structural_pressure(uint32_t *window, int pos) {
 }
 
 
-
 void force_re_lock_lexicon() {
     size_t finite_count = sizeof(finite_list) / sizeof(FiniteEntry);
     
@@ -518,83 +519,97 @@ void update_co_occurrence(uint32_t *window, int current_idx) {
 
 
 
+// -------------------------
+// PRISM Plane Training with Reasoning & Causal Links
+// -------------------------
+
 void train_prism_planes(uint32_t *ids, size_t count, int silent) {
     if (!ids || count < 2) return;
+
+    uint32_t recent_subjects[5] = {0};  // store last 5 nouns for subject reasoning
+    int subj_idx = 0;
 
     for (size_t i = 0; i < count; i++) {
         uint32_t current_id = ids[i];
         if (current_id == 0 || current_id >= nodes_count) continue;
 
-        // --- 0. Build word string ---
-        char word[128];
-        build_word_from_id(current_id, word, sizeof(word));
+        uint16_t current_mask = trie_pool[current_id].pos_mask;
 
-        // --- 1. Launch background POS worker ---
-        PosJob *job = malloc(sizeof(PosJob));
-        if (job) {
-            job->node_id = current_id;
-            strncpy(job->word, word, sizeof(job->word)-1);
-            job->word[sizeof(job->word)-1] = '\0';
+        // Update recent subjects
+        if (current_mask & POS_NOUN) {
+            recent_subjects[subj_idx++ % 5] = current_id;
+        }
 
-            pthread_t tid;
-            if (pthread_create(&tid, NULL, pos_worker, job) == 0) {
-                pthread_detach(tid); // Run in background
-            } else {
-                free(job); // Failed to launch
+        // Co-occurrence table (±10 words)
+        size_t window_start = (i > 10) ? i - 10 : 0;
+        size_t window_end   = (i + 10 < count) ? i + 10 : count - 1;
+        for (size_t j = window_start; j <= window_end; j++) {
+            if (i == j) continue;
+            uint32_t neighbor_id = ids[j];
+            if (neighbor_id == 0 || neighbor_id >= nodes_count) continue;
+
+            uint32_t h = hash_pair(current_id, neighbor_id);
+            CoEntry *ce = co_occurrence_table[h];
+            while (ce) {
+                if ((ce->word_a == current_id && ce->word_b == neighbor_id) ||
+                    (ce->word_a == neighbor_id && ce->word_b == current_id)) {
+                    ce->count++;
+                    break;
+                }
+                ce = ce->next;
+            }
+            if (!ce) {
+                ce = malloc(sizeof(CoEntry));
+                ce->word_a = current_id;
+                ce->word_b = neighbor_id;
+                ce->count  = 1;
+                ce->next   = co_occurrence_table[h];
+                co_occurrence_table[h] = ce;
             }
         }
 
-        // --- 2. CONTEXTUAL INFERENCE (window of 3 before/after) ---
-        size_t window_start = (i > 3) ? i - 3 : 0;
-        size_t window_end   = (i + 3 < count) ? i + 3 : count - 1;
-
-        for (size_t j = i; j <= window_end; j++) {
-            if (trie_pool[ids[j]].pos_mask & POS_STOP) {
-                window_end = j;
-                break;
-            }
-        }
-
-        infer_pos_with_context(ids, i, window_start, window_end);
-
-        // --- 3. STRUCTURAL WEAVING (Short-term transitions) ---
+        // Structural transition (previous word)
         if (i > 0) {
             uint32_t prev_id = ids[i-1];
-            if (prev_id < nodes_count) {
-                record_grammar_path(trie_pool[prev_id].pos_mask, trie_pool[current_id].pos_mask);
-                record_transition(prev_id, current_id);
-            }
+            if (prev_id < nodes_count) record_transition(prev_id, current_id);
         }
 
-        // --- 4. STRUCTURAL PRESSURE (Contextual refinement) ---
-        if (i > 0 && i < count - 1) {
-            if (ids[i-1] < nodes_count && ids[i+1] < nodes_count) {
-                apply_structural_pressure(ids, (int)i);
-            }
-        }
+        // Causal links (long-term reasoning)
+        for (int s = 0; s < 5; s++) {
+            uint32_t subj = recent_subjects[s];
+            if (subj == 0 || subj == current_id) continue;
 
-        // --- 5. REASONING PLANE (Long-term co-occurrence) ---
-        uint16_t current_mask = trie_pool[current_id].pos_mask;
-        if (current_mask & (POS_NOUN | POS_VERB | POS_ADJ)) {
-            size_t co_start = (i > 64) ? i - 64 : 0;
-            for (size_t j = co_start; j < i; j++) {
-                uint32_t past_id = ids[j];
-                if (past_id < nodes_count) {
-                    uint16_t past_mask = trie_pool[past_id].pos_mask;
-                    if (past_mask & (POS_NOUN | POS_VERB | POS_ADJ)) {
-                        increment_co_link(past_id, current_id);
+            // Only link important POS
+            uint16_t subj_mask = trie_pool[subj].pos_mask;
+            if ((current_mask & (POS_NOUN|POS_VERB|POS_ADJ)) &&
+                (subj_mask    & (POS_NOUN|POS_VERB|POS_ADJ))) {
+
+                uint32_t h_c = hash_pair(subj, current_id);
+                CoEntry *ce = causal_table[h_c];
+                while (ce) {
+                    if (ce->word_a == subj && ce->word_b == current_id) {
+                        ce->count++;
+                        break;
                     }
+                    ce = ce->next;  
                 }
+                if (!ce) {
+                    ce = malloc(sizeof(CoEntry));
+                    ce->word_a = subj;
+                    ce->word_b = current_id;
+                    ce->count  = 1;
+                    ce->next   = causal_table[h_c];
+                    causal_table[h_c] = ce;
+                }
+                ce->count += 1;  
             }
         }
     }
 
     if (!silent) {
-        printf(GREEN "PRISM: All Planes (Lexical, Structural, Reasoning) Hydrated." RESET "\n");
+        printf(GREEN "PRISM: Planes (Lexical, Structural, Reasoning, Causal) Hydrated.\n" RESET);
     }
 }
-
-
 
 void print_pos_roles(uint16_t mask) {
     int found = 0;
@@ -669,4 +684,3 @@ void print_structural_patterns(const char *target_word) {
     }
     printf("------------------------------------------\n");
 }
-

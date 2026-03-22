@@ -24,12 +24,17 @@ extern POSMap pos_map[] ;
 
 extern const int POS_MAP_COUNT;
 
+// Forward declare your causal entry
 typedef struct CoEntry {
     uint32_t word_a;
     uint32_t word_b;
     uint32_t count;
     struct CoEntry *next;
 } CoEntry;
+
+// Global causal table
+#define CAUSAL_TABLE_SIZE 65536  // adjust as needed
+extern CoEntry *causal_table[CAUSAL_TABLE_SIZE];
 
 #define CO_HASH_SIZE 32768   // Power of 2 is better for masking
 extern CoEntry *co_occurrence_table[CO_HASH_SIZE];

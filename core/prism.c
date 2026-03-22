@@ -89,42 +89,41 @@ void init_trie(void) {
  *   - Otherwise, the node ID of the longest matching prefix
  *   - Returns 0 if no prefix matches at all
  */
-uint32_t search_word(const char *word) {
-    if (!word || nodes_count == 0) return 0;
 
-    uint32_t curr_idx = 0;  // Start at root
-    uint32_t last_match = 0; // Track last node in the trie
+
+uint32_t search_word(const char *word) {
+    if (!word || !word[0] || nodes_count == 0) return 0;
+
+    uint32_t curr_idx = 0;       // root
+    uint32_t last_match = 0;     // longest valid word found
 
     for (int i = 0; word[i] != '\0'; i++) {
-        uint8_t target_letter = (uint8_t)word[i];
-        uint32_t child_idx = trie_pool[curr_idx].first_child;
-        int found = 0;
+        uint8_t target_letter = char_to_idx(word[i]); // ✅ FIXED
 
-        // Traverse sibling chain
+        uint32_t child_idx = trie_pool[curr_idx].first_child;
+        uint32_t found = 0;
+
         while (child_idx != 0) {
             if (trie_pool[child_idx].letter_idx == target_letter) {
-                curr_idx = child_idx;
-                found = 1;
+                found = child_idx;
                 break;
             }
             child_idx = trie_pool[child_idx].next_sibling;
         }
 
         if (!found) {
-            // Letter not found, return the last matched node
-            return last_match;
+            return last_match; // longest prefix
         }
 
-        // Update last_match if this node marks a valid word
+        curr_idx = found;
+
         if (trie_pool[curr_idx].is_word) {
             last_match = curr_idx;
         }
     }
 
-    // If the full word exists, return its node
-    return (trie_pool[curr_idx].is_word) ? curr_idx : last_match;
+    return last_match;
 }
-
 
 void build_word_from_id(uint32_t id, char *buffer, size_t max_len) {
     int pos = 0;
@@ -277,17 +276,25 @@ uint32_t insert_word(const char *word) {
     uint32_t current = 0; // root
 
     for (int i = 0; word[i]; i++) {
-        uint8_t l_idx = char_to_idx(word[i]); // ← map to 0-40
+        uint8_t l_idx = char_to_idx(word[i]);
         uint32_t found = 0;
 
         uint32_t child = trie_pool[current].first_child;
         while (child) {
-            if (trie_pool[child].letter_idx == l_idx) { found = child; break; }
+            if (trie_pool[child].letter_idx == l_idx) {
+                found = child;
+                break;
+            }
             child = trie_pool[child].next_sibling;
         }
 
-        if (!found) found = create_node(l_idx, current);
-        else if (trie_pool[found].total_frequency < 255) trie_pool[found].total_frequency++;
+        if (!found) {
+            found = create_node(l_idx, current);
+            if (found == 0) return 0; // safety
+        } else {
+            if (trie_pool[found].total_frequency < 255)
+                trie_pool[found].total_frequency++;
+        }
 
         current = found;
     }
@@ -295,7 +302,6 @@ uint32_t insert_word(const char *word) {
     trie_pool[current].is_word = 1;
     return current;
 }
-
 
 int find_word(const char *word) {
     if (!word || !word[0]) return 0;

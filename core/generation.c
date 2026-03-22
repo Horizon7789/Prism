@@ -16,6 +16,8 @@
 #include <ctype.h>
 #include "prism.h"
 
+SubjectMemory subject_memory = {0};   // Global definition
+
 /* ================================================================
    BULK TRAINING FROM FILE
    Reads the file in chunks, splits into tokens, trains all planes.
@@ -64,165 +66,163 @@ static const GenTemplate gen_templates[] = {
       {POS_NOUN, POS_AUX, POS_ADJ, 0, 0, 0, 0, 0},
       3 },
 };
+
 #define GEN_TEMPLATE_COUNT (int)(sizeof(gen_templates)/sizeof(gen_templates[0]))
 
+SubjectMemory mem = {0};
 
-/* ================================================================
-   IMPROVED generate_multi_sentence
-   Drop-in replacement for the original.
+// Picks an auxiliary verb connected to current word or recent subjects
+uint32_t pick_auxiliary_verb(uint32_t current_id, uint32_t *recent_subjects, int subj_count) {
+    if (!current_id) return 0;
 
-   Improvements over original:
-   1. Grammar template guidance — tries to fill POS slots before
-      allowing a sentence-ender, so output has real structure.
-   2. Repetition window — won't repeat a word seen in last 8 tokens.
-   3. Dead-end recovery — if predict_next_id returns 0, tries the
-      subject anchor directly instead of immediately giving up.
-   4. Capitalisation and spacing are handled correctly.
-   5. Sentence count is enforced properly.
-   ================================================================ */
-#define REPEAT_WINDOW 8
-#define MAX_TEMPLATE_SLOTS 8
-#define MAX_WORDS_PER_SENTENCE 60
+    // Check structural transitions from current word first
+    StructuralEntry *entry = structural_matrix[hash_id(current_id)];
+    while (entry && entry->source_id != current_id) entry = entry->next;
+    if (!entry || !entry->transitions) return 0;
+
+    uint32_t best_id = 0;
+    uint32_t best_freq = 0;
+    TransitionNode *curr = entry->transitions;
+
+    while (curr) {
+        uint32_t candidate_id = curr->target_id;
+        uint16_t mask = trie_pool[candidate_id].pos_mask;
+
+        // Only allow auxiliaries
+        if (mask & POS_AUX) {
+            if (curr->frequency > best_freq) {
+                best_id = candidate_id;
+                best_freq = curr->frequency;
+            }
+        }
+        curr = curr->next;
+    }
+
+    // If no aux found in direct transitions, check causal links with subjects
+    if (!best_id && recent_subjects && subj_count > 0) {
+        for (int i = 0; i < subj_count; i++) {
+            uint32_t subj_id = recent_subjects[i];
+            uint32_t h_c = hash_pair(current_id, subj_id);
+            CoEntry *ce = causal_table[h_c];
+            while (ce) {
+                if ((ce->word_a != current_id && ce->word_b != current_id) &&
+                    (trie_pool[ce->word_a].pos_mask & POS_AUX)) {
+                    best_id = ce->word_a;
+                    break;
+                }
+                if ((ce->word_a != current_id && ce->word_b != current_id) &&
+                    (trie_pool[ce->word_b].pos_mask & POS_AUX)) {
+                    best_id = ce->word_b;
+                    break;
+                }
+                ce = ce->next;
+            }
+            if (best_id) break;
+        }
+    }
+
+    return best_id;
+}
 
 void generate_multi_sentence(const char *seed, int target_sentences) {
     if (!seed || strlen(seed) == 0) return;
 
     uint32_t seed_id = search_word(seed);
-    if (seed_id == 0) {
-    seed_id = insert_word(seed);
-    if (seed_id == 0) {
-        printf(RED "PRISM: Seed word could not be registered.\n" RESET);
-        return;
-    }
-    printf(YELLOW "PRISM: '%s' unknown — inserted as anchor.\n" RESET, seed);
+    if (seed_id == 0) seed_id = insert_word(seed);
 
-    // Light training to avoid dead-ends
-    auto_train_seed(seed_id, seed);
-}
-
-    // Pick a grammar template based on seed POS
-    const GenTemplate *tmpl = NULL;
-    uint16_t seed_mask = trie_pool[seed_id].pos_mask;
-    for (int t = 0; t < GEN_TEMPLATE_COUNT; t++) {
-        if (seed_mask & gen_templates[t].trigger_pos) {
-            tmpl = &gen_templates[t];
-            break;
-        }
-    }
-    if (!tmpl) tmpl = &gen_templates[0];
-
-    // Initialize state
     uint32_t current_id = seed_id;
-    uint32_t subject_id = seed_id;
     int sentences = 0;
     int word_count = 0;
-    int tmpl_slot = 0;
-    int capitalize = 1; // first word capitalized
 
     uint32_t recent[REPEAT_WINDOW] = {0};
     int recent_idx = 0;
 
+    uint32_t recent_subjects[SUBJECT_MEMORY] = {seed_id};
+    int subj_idx = 1;
+
+    uint32_t context_window[CONTEXT_WINDOW] = {0};
+    int ctx_size = 0;
+
     printf(BOLD "\nPRISM> " RESET);
 
-    // Print first word (seed)
     char word_str[64];
-    build_word_from_id(seed_id, word_str, sizeof(word_str)); 
+    build_word_from_id(seed_id, word_str, sizeof(word_str));
+    word_str[0] = toupper((unsigned char)word_str[0]);
+    printf("%s", word_str);
 
-        if (capitalize && islower(word_str[0])) word_str[0] = toupper(word_str[0]);
-        printf("%s", word_str);
-        
-    recent[recent_idx++ % REPEAT_WINDOW] = seed_id;
+    recent[recent_idx % REPEAT_WINDOW] = seed_id;
+    recent_idx++;
+    context_window[ctx_size % CONTEXT_WINDOW] = seed_id;
+    ctx_size++;
     word_count++;
 
-    // Sentence generation loop
     while (sentences < target_sentences && word_count < MAX_WORDS_PER_SENTENCE) {
-        uint32_t next_id = predict_next_id(current_id, subject_id);
 
-        // Dead-end fallback
+        uint32_t next_id = predict_next_id(
+            current_id,
+            recent_subjects,
+            subj_idx,
+            context_window,
+            ctx_size
+        );
+
         if (next_id == 0) {
-            next_id = predict_next_id(subject_id, subject_id);
-            if (next_id == 0) {
-                // fallback to a random word with outgoing edges
-                next_id = pick_random_anchor();
-                if (next_id == 0) break; // no valid word available
-            }
+            next_id = pick_auxiliary_verb(current_id, recent_subjects, subj_idx);
         }
+        if (next_id == 0) {
+            next_id = get_most_frequent_successor(current_id);
+        }
+        if (next_id == 0) break;
 
-        // Avoid repeating recent tokens or punctuation
+        // Avoid repeats
         int is_repeat = 0;
-        int is_punct = is_id_punctuation(next_id);
         for (int r = 0; r < REPEAT_WINDOW; r++) {
-            if (recent[r] == next_id) { is_repeat = 1; break; }
-            if (is_punct && is_id_punctuation(recent[r])) { is_repeat = 1; break; }
+            if (recent[r] == next_id) {
+                is_repeat = 1;
+                break;
+            }
         }
         if (is_repeat) {
-            uint32_t alt = predict_next_id(subject_id, subject_id);
-            if (alt != 0 && alt != next_id) next_id = alt;
-            else break; // give up gracefully
+            current_id = recent[(recent_idx - 1 + REPEAT_WINDOW) % REPEAT_WINDOW];
+            continue;
         }
 
-        // Template slot handling
-        if (tmpl && tmpl_slot < tmpl->slot_count) {
-            uint16_t expected = tmpl->slots[tmpl_slot];
-            if (expected != 0) {
-                uint16_t cand_mask = trie_pool[next_id].pos_mask;
-                if (cand_mask & expected) tmpl_slot++;
-            } else {
-                tmpl_slot++; // any slot
-            }
+        // Update subjects (simple version - no subject_memory struct)
+        if (trie_pool[next_id].pos_mask & POS_NOUN) {
+            recent_subjects[subj_idx % SUBJECT_MEMORY] = next_id;
+            subj_idx++;
         }
 
-        // Sentence ender check
-        int is_ender = is_id_sentence_ender(next_id);
-        if (is_ender && tmpl && tmpl_slot < tmpl->slot_count - 1) {
-            uint32_t alt = predict_next_id(subject_id, subject_id);
-            if (alt != 0 && !is_id_sentence_ender(alt)) {
-                next_id = alt;
-                is_ender = 0;
-            }
-        }
-
-        // Print the word
-        char word_str[64];
+        // Print
         build_word_from_id(next_id, word_str, sizeof(word_str));
-        current_id = next_id; word_count++; continue; 
+        if (!is_id_punctuation(next_id)) printf(" ");
+        printf("%s", word_str);
 
-        if (is_punct) {
-            printf("%s", word_str); // no space before punctuation
-        } else {
-            printf(" ");
-            if (capitalize && isalpha(word_str[0])) {
-                word_str[0] = toupper(word_str[0]);
-                capitalize = 0;
-            }
-            printf("%s", word_str);
-        }
-        
-        // Sentence ending
-        if (is_ender) {
-            printf("\n");
+        // Update windows
+        recent[recent_idx % REPEAT_WINDOW] = next_id;
+        recent_idx++;
+        context_window[ctx_size % CONTEXT_WINDOW] = next_id;
+        ctx_size++;
+
+        current_id = next_id;
+        word_count++;
+
+        if (is_id_sentence_ender(next_id)) {
+            printf(".\n");
             sentences++;
-            capitalize = 1;
-            tmpl_slot = 0;
+            word_count = 0;
             current_id = seed_id;
             memset(recent, 0, sizeof(recent));
             recent_idx = 0;
-            word_count = 0; // reset word count per sentence
-        } else {
-            current_id = next_id;
+            memset(context_window, 0, sizeof(context_window));
+            ctx_size = 0;
+            subj_idx = 1;
+            recent_subjects[0] = seed_id;
         }
-
-        recent[recent_idx++ % REPEAT_WINDOW] = next_id;
-        word_count++;
     }
-
-    if (word_count == 0)
-        printf(YELLOW "PRISM: No transitions found for '%s'. "
-               "Try: train file <path> to add training data.\n" RESET, seed);
 
     printf("\n");
 }
-
 
 #include <time.h>
 
@@ -249,7 +249,45 @@ uint32_t pick_random_anchor(void) {
 }
 
 int has_outgoing_edges(uint32_t word_id) {
-    return predict_next_id(word_id, word_id) != 0;
+    if (word_id == 0 || word_id >= nodes_count) return 0;
+
+    uint32_t slot = hash_id(word_id);
+    StructuralEntry *entry = structural_matrix[slot];
+
+    // Find the entry for this word
+    while (entry) {
+        if (entry->source_id == word_id) break;
+        entry = entry->next;
+    }
+
+    if (!entry || !entry->transitions) return 0;
+
+    // Check if there is at least one candidate that passes grammar
+    TransitionNode *curr = entry->transitions;
+    uint16_t prev_mask = trie_pool[word_id].pos_mask;
+
+    while (curr) {
+        uint32_t cand_id = curr->target_id;
+        uint16_t cand_mask = trie_pool[cand_id].pos_mask;
+
+        // Locked words always count as outgoing
+        if (cand_mask & POS_LOCKED) return 1;
+
+        // Check grammar matrix for any valid POS crossing
+        int allowed = 0;
+        for (int i = 0; i < 16 && !allowed; i++) {
+            if (!(prev_mask & (1 << i))) continue;
+            for (int j = 0; j < 16 && !allowed; j++) {
+                if (!(cand_mask & (1 << j))) continue;
+                if (grammar_matrix[i][j] > 0) allowed = 1;
+            }
+        }
+
+        if (allowed) return 1;
+        curr = curr->next;
+    }
+
+    return 0; // No valid outgoing edges
 }
 
 void auto_train_seed(uint32_t seed_id, const char *seed) {

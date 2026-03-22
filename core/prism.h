@@ -16,6 +16,11 @@
 #define HASH_SIZE 16384 
 #define POS_LOCKED 0x8000
 
+
+#define REPEAT_WINDOW     8
+#define CONTEXT_WINDOW    12
+#define CANDIDATE_POOL    256
+
 extern volatile sig_atomic_t PRISM_ABORT;
 
 /* COLORS */
@@ -45,6 +50,10 @@ extern volatile sig_atomic_t PRISM_ABORT;
 extern int PRISM_SILENT;
 
 #define ALPHABET_SIZE 26
+#define SUBJECT_MEMORY 8
+#define REPEAT_WINDOW 8
+#define MAX_SUBJECTS 5
+#define MAX_WORDS_PER_SENTENCE 128
 
 #define MAX_FREE_SLOTS 10000
 extern uint32_t free_slots[MAX_FREE_SLOTS];
@@ -67,6 +76,12 @@ typedef struct {
     uint8_t total_frequency; 
 } CompactNode;
 
+typedef struct {
+    uint32_t ids[SUBJECT_MEMORY];
+    int count;
+} SubjectMemory;
+
+extern SubjectMemory subject_memory;  
 
 typedef struct {
     uint32_t start_letter; // Explicitly store 'a', 'b', etc.
@@ -282,7 +297,18 @@ void record_transition(uint32_t src, uint32_t target);
 void train_structural_plane(uint32_t *ids, size_t count);
 
 // Returns the most statistically likely ID to follow the given current_id
-uint32_t predict_next_id(uint32_t current_id, uint32_t subject_id);
+uint32_t predict_next_id(uint32_t current_id,
+                         uint32_t *subjects, int subj_count,
+                         uint32_t *context_window, int ctx_size);
+
+int get_structural_freq(uint32_t from, uint32_t to);
+int get_co_count(uint32_t a, uint32_t b);
+int get_causal_count(uint32_t a, uint32_t b);
+uint32_t get_most_frequent_successor(uint32_t from);
+
+extern uint32_t recent[REPEAT_WINDOW];
+extern SubjectMemory subject_memory;   // if you use the struct
+                         
 
 
 // Performs a replay that can "auto-correct" based on structural probability
@@ -315,6 +341,11 @@ void generate_multi_sentence(const char *seed, int target_sentences);
 int has_outgoing_edges(uint32_t word_id);
 void assign_hybrid_pos(uint32_t node_id);
 uint16_t fetch_online_pos(const char *word);
+int grammar_pass(uint16_t prev_mask, uint16_t cand_mask);
+void add_subject(SubjectMemory *mem, uint32_t id);
+uint32_t pick_auxiliary_verb(uint32_t current_id, uint32_t *recent_subjects, int subj_count);
+int train_facts_from_text(const char *text, const char *subject);
+void seed_core_concepts(const char *subject, const char *text);
 
 /* Convert index 0-25 back to letter 'a'-'z' */
 static inline int letter_to_index(char c) {
