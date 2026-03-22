@@ -29,6 +29,7 @@ typedef struct CoEntry {
     uint32_t word_a;
     uint32_t word_b;
     uint32_t count;
+    uint32_t verb; 
     struct CoEntry *next;
 } CoEntry;
 

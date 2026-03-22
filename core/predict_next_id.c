@@ -17,18 +17,24 @@
 
 #define TOP_K 5
 
+// In core/prism_globals.c
+#include "prism.h"
+
+struct CoEntry *causal_table[CAUSAL_TABLE_SIZE] = {0};  // actual definition
+
+extern CoEntry *co_occurrence_table[];
+extern CoEntry *causal_table[];
+
+/* Hash function for table indexing (same as your existing hash_pair) */
+extern uint32_t hash_pair(uint32_t a, uint32_t b);
+
 uint32_t candidates[TOP_K] = {0};
 float scores[TOP_K] = {0};
-
-uint32_t recent_content[CONTEXT_WINDOW] = {0};
-int recent_count = 0;
-CoEntry *causal_table[CAUSAL_TABLE_SIZE] = {0};
 
 // -------------------------
 // PRISM Reasoning & Generation
 // -------------------------
 
-#define REPEAT_WINDOW 8
 #define MAX_WORDS_PER_SENTENCE 128
 
 typedef struct TransitionNode TransitionNode;
@@ -112,9 +118,6 @@ int get_co_count(uint32_t a, uint32_t b) {
     return 0;
 }
 
-// ================================================================
-// Helper: Causal Count
-// ================================================================
 int get_causal_count(uint32_t a, uint32_t b) {
     if (a == 0 || b == 0 || a == b) return 0;
 
@@ -129,6 +132,8 @@ int get_causal_count(uint32_t a, uint32_t b) {
     }
     return 0;
 }
+
+
 
 // ================================================================
 // Main Predictor — Context-Aware Resonance
@@ -269,7 +274,8 @@ uint32_t get_most_frequent_successor(uint32_t from) {
 
     TransitionNode *t = entry->transitions;
     uint32_t best = 0;
-    int best_freq = 0;
+    uint32_t best_freq = 0;
+    
 
     while (t) {
         if (t->frequency > best_freq) {
@@ -279,4 +285,105 @@ uint32_t get_most_frequent_successor(uint32_t from) {
         t = t->next;
     }
     return best;
+}
+
+
+
+
+void prism_add_coupling(uint32_t a, uint32_t b, int weight) {
+    if (a == 0 || b == 0 || a == b) return;
+
+    uint32_t h = hash_pair(a, b);
+    CoEntry *ce = co_occurrence_table[h];
+
+    /* Search for existing entry */
+    while (ce) {
+        if ((ce->word_a == a && ce->word_b == b) ||
+            (ce->word_a == b && ce->word_b == a)) {
+            ce->count += weight;
+            if (ce->count < 0) ce->count = 0;
+            return;
+        }
+        ce = ce->next;
+    }
+
+    /* Create new entry */
+    ce = (CoEntry*)malloc(sizeof(CoEntry));
+    if (!ce) return;
+
+    ce->word_a = a;
+    ce->word_b = b;
+    ce->count  = weight;
+    ce->next   = co_occurrence_table[h];
+    co_occurrence_table[h] = ce;
+
+#if DEBUG_REASONING
+    char word_a[64], word_b[64];
+    build_word_from_id(a, word_a, sizeof(word_a));
+    build_word_from_id(b, word_b, sizeof(word_b));
+    printf("[COUPLING] %s ↔ %s (weight=%d)\n", word_a, word_b, weight);
+#endif
+}
+
+/* ----------------------------------------------------------------------
+   Causal: directed relation (subject → verb → object)
+   ---------------------------------------------------------------------- */
+void prism_add_causal(uint32_t subject, uint32_t verb, uint32_t object, int weight) {
+    if (subject == 0 || object == 0) return;
+
+    uint32_t h = hash_pair(subject, object);
+    CoEntry *ce = causal_table[h];
+
+    /* Search for existing causal link */
+    while (ce) {
+        if (ce->word_a == subject && ce->word_b == object) {
+            ce->count += weight;
+            if (ce->count < 0) ce->count = 0;
+            return;
+        }
+        ce = ce->next;
+    }
+
+    /* Create new causal link */
+    ce = (CoEntry*)malloc(sizeof(CoEntry));
+    if (!ce) return;
+
+    ce->word_a = subject;
+    ce->word_b = object;
+    ce->verb   = verb;     // store verb for causal reasoning
+    ce->count  = weight;
+    ce->next   = causal_table[h];
+    causal_table[h] = ce;
+
+#if DEBUG_REASONING
+    char s[64], v[64], o[64];
+    build_word_from_id(subject, s, sizeof(s));
+    build_word_from_id(verb, v, sizeof(v));
+    build_word_from_id(object, o, sizeof(o));
+    printf("[CAUSAL] %s --%s--> %s (weight=%d)\n", s, v, o, weight);
+#endif
+}
+
+
+/* ----------------------------------------------------------------------
+   Optional: Reset tables (useful during testing)
+   ---------------------------------------------------------------------- */
+void reset_reasoning_tables(void) {
+    for (int i = 0; i < HASH_SIZE; i++) {
+        CoEntry *ce = co_occurrence_table[i];
+        while (ce) {
+            CoEntry *tmp = ce;
+            ce = ce->next;
+            free(tmp);
+        }
+        co_occurrence_table[i] = NULL;
+
+        ce = causal_table[i];
+        while (ce) {
+            CoEntry *tmp = ce;
+            ce = ce->next;
+            free(tmp);
+        }
+        causal_table[i] = NULL;
+    }
 }

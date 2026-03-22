@@ -17,9 +17,16 @@
 #define POS_LOCKED 0x8000
 
 
-#define REPEAT_WINDOW     8
+#define REPEAT_WINDOW     12
 #define CONTEXT_WINDOW    12
 #define CANDIDATE_POOL    256
+
+#define EDGE_REASON  1
+#define EDGE_CAUSAL  2
+
+/* Core reasoning APIs */
+void prism_add_coupling(uint32_t a, uint32_t b, int weight);
+void prism_add_causal(uint32_t subject, uint32_t verb, uint32_t object, int weight);
 
 extern volatile sig_atomic_t PRISM_ABORT;
 
@@ -51,13 +58,16 @@ extern int PRISM_SILENT;
 
 #define ALPHABET_SIZE 26
 #define SUBJECT_MEMORY 8
-#define REPEAT_WINDOW 8
 #define MAX_SUBJECTS 5
 #define MAX_WORDS_PER_SENTENCE 128
 
 #define MAX_FREE_SLOTS 10000
 extern uint32_t free_slots[MAX_FREE_SLOTS];
 extern uint32_t free_ptr; // Points to the next available recycled index
+
+#define CAUSAL_TABLE_SIZE 65536
+
+extern struct CoEntry *causal_table[CAUSAL_TABLE_SIZE];  // global declaration
 
 void* pos_worker(void* arg);
 

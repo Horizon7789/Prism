@@ -52,23 +52,6 @@ typedef struct {
     int      slot_count;
 } GenTemplate;
 
-static const GenTemplate gen_templates[] = {
-    /* NOUN seed:  NOUN + AUX + (ADJ|NOUN) + PREP + DET + NOUN */
-    { POS_NOUN,
-      {POS_AUX, POS_NOUN|POS_ADJ, POS_PREP, POS_DET, POS_NOUN, 0, 0, 0},
-      5 },
-    /* VERB seed:  VERB + DET + NOUN + PREP + DET + NOUN */
-    { POS_VERB,
-      {POS_DET, POS_NOUN, POS_PREP, POS_DET, POS_NOUN, 0, 0, 0},
-      5 },
-    /* ADJ seed:   ADJ + NOUN + AUX + ADJ */
-    { POS_ADJ,
-      {POS_NOUN, POS_AUX, POS_ADJ, 0, 0, 0, 0, 0},
-      3 },
-};
-
-#define GEN_TEMPLATE_COUNT (int)(sizeof(gen_templates)/sizeof(gen_templates[0]))
-
 SubjectMemory mem = {0};
 
 // Picks an auxiliary verb connected to current word or recent subjects

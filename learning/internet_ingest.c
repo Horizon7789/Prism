@@ -19,7 +19,7 @@
 #ifdef WEB
 #include <curl/curl.h>
 #include <json-c/json.h>
-
+    
 /* ── HTTP helper ─────────────────────────────────────────────── */
 
 typedef struct { char *data; size_t size; } WebBuf;
@@ -280,12 +280,12 @@ int train_facts_from_text(const char *text, const char *subject) {
 
     int fact_count = 0;
 
-    // Split into sentences (simple heuristic)
+    // Split text into sentences
     char *copy = strdup(text);
     char *sentence = strtok(copy, ".!?");
 
     while (sentence) {
-        // Trim leading/trailing whitespace
+        // Trim leading spaces
         while (*sentence == ' ') sentence++;
 
         if (strlen(sentence) < 8) {
@@ -293,55 +293,60 @@ int train_facts_from_text(const char *text, const char *subject) {
             continue;
         }
 
-        // Train the full sentence with normal weight (keeps some fluency)
-        uint32_t *ids = NULL;
+        // Tokenize sentence
         size_t wc = 0;
         char **words = split_sentence(sentence, &wc);
-
-        if (words && wc > 2) {
-            ids = malloc(wc * sizeof(uint32_t));
-            for (size_t i = 0; i < wc; i++) {
-                ids[i] = insert_word(words[i]);
-                free(words[i]);
-            }
-            free(words);
-
-            train_prism_planes(ids, wc, 1);   // silent
-            fact_count += (int)wc;
-            free(ids);
+        if (!words || wc < 2) {
+            sentence = strtok(NULL, ".!?");
+            continue;
         }
 
-        // Extract simple facts for stronger Reasoning/Causal links
-        // Example patterns: "X is Y", "X has Z", "X classified as W"
-        if (strstr(sentence, " is ") || strstr(sentence, " has ") || 
-            strstr(sentence, " classified as ")) {
+        uint32_t *ids = malloc(wc * sizeof(uint32_t));
+        for (size_t i = 0; i < wc; i++) {
+            ids[i] = insert_word(words[i]);
+            free(words[i]);
+        }
+        free(words);
 
-            uint32_t subj_id = insert_word(subject);   // anchor to query subject
+        // Train lexical/structural/causal planes
+        train_prism_planes(ids, wc, 1); // silent
+        fact_count += (int)wc;
 
-            // Simple keyword-based fact boosting
-            if (strstr(sentence, "rocky") || strstr(sentence, "metallic") || strstr(sentence, "icy")) {
-                uint32_t attr = insert_word("rocky");   // or extract the actual word
-                prism_add_coupling(subj_id, attr, EDGE_REASON, 40);   // strong link
+        // Symbolic reasoning links
+        uint32_t subj_id = insert_word(subject); // anchor subject
+
+        for (size_t i = 0; i < wc; i++) {
+            uint32_t word_id = ids[i];
+            uint16_t mask = trie_pool[word_id].pos_mask;
+
+            // Nouns/Adjectives -> attribute/coupling
+            if (mask & (POS_NOUN | POS_ADJ)) {
+                prism_add_coupling(subj_id, word_id, 35);
                 fact_count++;
             }
-            if (strstr(sentence, "orbit")) {
-                uint32_t verb = insert_word("orbits");
-                prism_add_causal(subj_id, verb, insert_word("sun"), 35);
-                fact_count++;
-            }
-            if (strstr(sentence, "dwarf planet") || strstr(sentence, "Ceres")) {
-                uint32_t ceres = insert_word("ceres");
-                prism_add_coupling(ceres, insert_word("dwarf"), EDGE_REASON, 50);
+
+            // Verbs -> causal action
+            if (mask & POS_VERB) {
+                // optionally link to next noun in sentence as object
+                uint32_t obj_id = 0;
+                for (size_t j = i + 1; j < wc; j++) {
+                    if (trie_pool[ids[j]].pos_mask & POS_NOUN) {
+                        obj_id = ids[j];
+                        break;
+                    }
+                }
+                prism_add_causal(subj_id, word_id, obj_id, 30);
                 fact_count++;
             }
         }
 
+        free(ids);
         sentence = strtok(NULL, ".!?");
     }
 
     free(copy);
 
-    // Final boost: seed core knowledge
+    // Optional: seed core concepts automatically from the text
     seed_core_concepts(subject, text);
 
     return fact_count;
@@ -413,7 +418,7 @@ void seed_core_concepts(const char *subject, const char *text) {
         // Reasoning (attributes)
         // -------------------------
         if (mask & (POS_NOUN | POS_ADJ)) {
-            prism_add_coupling(subj_id, word_id, EDGE_REASON, weight);
+            prism_add_coupling(subj_id, word_id, weight);
         }
 
         // -------------------------
