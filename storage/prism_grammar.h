@@ -65,6 +65,7 @@ extern uint32_t entries_used ;
 #define POS_STOP      0x2000   // punctuation
 
 #define POS_WH        0x4000   // who, what, when, etc.
+#define POS_UNKNOWN   0x000
 
 extern const int FINITE_COUNT;
 

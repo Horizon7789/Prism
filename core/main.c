@@ -5,6 +5,15 @@
 
 #include "prism.h"
 
+#include <signal.h>
+
+volatile sig_atomic_t PRISM_ABORT = 0;
+
+void handle_sigint(int sig) {
+    (void)sig;
+    PRISM_ABORT = 1;
+}
+
 int PRISM_SILENT = 0;
 TrieNode *root[ALPHABET_SIZE] = {0};
 
@@ -31,6 +40,7 @@ void clean_input(char *str) {
 
 int main(void) {
     /* ===== 1. CORE INITIALIZATION ===== */
+    signal(SIGINT, handle_sigint);
     init_trie();
     seed_golden_lexicon();
     force_re_lock_lexicon();
@@ -118,7 +128,13 @@ int main(void) {
                     printf("Words stored in Trie:\n");
                     print_all_words();
                     continue;
-                } else if (!strcmp(input, "stats")) {
+                }
+                else if (!strcmp(input, "trie ids")) {
+                    printf("Words stored in Trie:\n");
+                    print_trie_ids();
+                    continue;
+                }
+                 else if (!strcmp(input, "stats")) {
                     print_stats();
                     continue;
                 } else if (!strcmp(input, "replay")) {
@@ -159,7 +175,15 @@ int main(void) {
                 } else if (!strcmp(input, "free memory")) {
                     clear_structural_matrix();
                     continue;
-                } else if (strncmp(input, "tags ", 5) == 0) {
+                } 
+                else if (strncmp(input, "search ", 7) == 0) {
+                    debug_show_phrases();
+                    continue;
+                } else if (!strcmp(input, "free memory")) {
+                    clear_structural_matrix();
+                    continue;
+                } 
+                else if (strncmp(input, "tags ", 5) == 0) {
                     char word[128] = {0};
                     snprintf(word, sizeof(word), "%s", input + 5);
                     debug_word_tags(word);

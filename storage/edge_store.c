@@ -199,17 +199,16 @@ uint8_t char_to_idx(char c) {
     return 0; 
 }
 
-
 char idx_to_char(uint8_t idx) {
-    if (idx <= 25) return 'a' + idx;
-    if (idx >= 26 && idx <= 35) return '0' + (idx - 26);
+    if (idx <= 25) return 'a' + idx;        // a-z
+    if (idx >= 26 && idx <= 35) return '0' + (idx - 26); // 0-9
     switch (idx) {
         case 36: return '.';
         case 37: return ',';
         case 38: return '!';
         case 39: return '?';
         case 40: return '-';
-        default: return ' ';
+        default: return ' '; // fallback
     }
 }
 
@@ -304,9 +303,9 @@ void replay_history(int limit) {
     
     int capitalize_next = 1;
     for (size_t i = 0; i < to_read; i++) {
-        char *word = get_word_by_id(buffer[i]);
-        if (!word) continue;
-
+        char word[64];
+        build_word_from_id(buffer[i], word, sizeof(word));
+        
         // 1. Capitalization
         if (capitalize_next && isalpha(word[0])) {
             word[0] = toupper(word[0]);
@@ -335,8 +334,6 @@ void replay_history(int limit) {
 
             if (should_space) printf(" ");
         }
-
-        free(word);
     }
     printf(BOLD CYAN "\n---------------------------------------" RESET "\n\n");
     free(buffer);
@@ -379,9 +376,9 @@ void replay_specific(const char *target_word) {
         }
 
         if (found_context) {
-            char *decoded = get_word_by_id(history[i]);
-            if (!decoded) continue;
-
+            char decoded[64];
+            build_word_from_id(history[i], decoded, sizeof(decoded));
+           
             // Apply capitalization
             if (capitalize_next && isalpha(decoded[0])) {
                 decoded[0] = toupper(decoded[0]);
@@ -396,13 +393,13 @@ void replay_specific(const char *target_word) {
             
             // Peek ahead for punctuation to avoid "word . "
             if (i + 1 < count) {
-                char *next_word = get_word_by_id(history[i+1]);
-                if (next_word) {
+                char next_word[64];
+                build_word_from_id(history[i+1], next_word, sizeof(next_word));
+               
                     if (next_word[0] == '.' || next_word[0] == ',' || 
                         next_word[0] == '!' || next_word[0] == '?') {
                         should_space = 0;
-                    }
-                    free(next_word);
+                   
                 }
             }
 
@@ -415,7 +412,7 @@ void replay_specific(const char *target_word) {
                 // Optional: Stop after one paragraph
                 // found_context = 0; 
             }
-            free(decoded);
+            
         }
     }
     free(history);

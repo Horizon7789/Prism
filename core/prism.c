@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 #include "prism.h"
 
@@ -81,19 +82,25 @@ void init_trie(void) {
 }
 
 
-#include <time.h>
-
+/**
+ * Search for a word in the trie.
+ * Returns:
+ *   - The node ID of the full word if it exists (is_word == 1)
+ *   - Otherwise, the node ID of the longest matching prefix
+ *   - Returns 0 if no prefix matches at all
+ */
 uint32_t search_word(const char *word) {
     if (!word || nodes_count == 0) return 0;
 
-    uint32_t curr_idx = 0; // Start at Root (Node 0)
+    uint32_t curr_idx = 0;  // Start at root
+    uint32_t last_match = 0; // Track last node in the trie
 
     for (int i = 0; word[i] != '\0'; i++) {
         uint8_t target_letter = (uint8_t)word[i];
         uint32_t child_idx = trie_pool[curr_idx].first_child;
         int found = 0;
 
-        // Traverse the horizontal sibling list
+        // Traverse sibling chain
         while (child_idx != 0) {
             if (trie_pool[child_idx].letter_idx == target_letter) {
                 curr_idx = child_idx;
@@ -103,51 +110,41 @@ uint32_t search_word(const char *word) {
             child_idx = trie_pool[child_idx].next_sibling;
         }
 
-        if (!found) return 0; // Path doesn't exist
+        if (!found) {
+            // Letter not found, return the last matched node
+            return last_match;
+        }
+
+        // Update last_match if this node marks a valid word
+        if (trie_pool[curr_idx].is_word) {
+            last_match = curr_idx;
+        }
     }
 
-    // Return the index itself as the ID if it's marked as a word
-    return (trie_pool[curr_idx].is_word) ? curr_idx : 0;
+    // If the full word exists, return its node
+    return (trie_pool[curr_idx].is_word) ? curr_idx : last_match;
 }
 
-char* get_word_by_id(uint32_t id) {
-    if (id == 0 || id >= nodes_count) return NULL;
 
-    char buffer[256];
+void build_word_from_id(uint32_t id, char *buffer, size_t max_len) {
     int pos = 0;
     uint32_t curr = id;
 
-    // 1. Traverse up to the root
-    while (curr != 0 && pos < 255) {
-        uint8_t val = trie_pool[curr].letter_idx;
-        
-        // Handle your custom Punctuation Mapping
-        if (val == 36)      buffer[pos++] = '.';
-        else if (val == 37) buffer[pos++] = ',';
-        else if (val == 38) buffer[pos++] = '!';
-        else if (val == 39) buffer[pos++] = '?';
-        // Handle your Relative Mappings (a-z, 0-9)
-        else if (val <= 25)           buffer[pos++] = 'a' + val;
-        else if (val >= 26 && val <= 35) buffer[pos++] = '0' + (val - 26);
-        // Fallback: If it's already ASCII, use it directly
-        else if (val >= 32)           buffer[pos++] = (char)val;
-        
+    while (curr != 0 && pos < (int)(max_len - 1)) {
+        buffer[pos++] = idx_to_char(trie_pool[curr].letter_idx);
         curr = trie_pool[curr].parent;
     }
-    buffer[pos] = '\0';
-    
-    // 2. Reverse the string
+
+    // reverse
     for (int i = 0; i < pos / 2; i++) {
-        char temp = buffer[i];
+        char tmp = buffer[i];
         buffer[i] = buffer[pos - 1 - i];
-        buffer[pos - 1 - i] = temp;
+        buffer[pos - 1 - i] = tmp;
     }
 
-    // 3. Return a copy (Caller must free!)
-    return strdup(buffer);
+    buffer[pos] = '\0';
 }
 
-    
 void prune_nodes() {
     uint32_t reclaimed = 0;
     
@@ -275,39 +272,27 @@ uint32_t create_node(uint8_t letter, uint32_t parent) {
 
 
 uint32_t insert_word(const char *word) {
-    if (!word || word[0] == '\0') return 0;
+    if (!word || !word[0]) return 0;
 
-    uint32_t current = 0; // Start at Root (Node 0)
+    uint32_t current = 0; // root
 
-    for (int i = 0; word[i] != '\0'; i++) {
-        uint8_t l_idx = (uint8_t)word[i]; // Use raw ASCII for better compatibility
+    for (int i = 0; word[i]; i++) {
+        uint8_t l_idx = char_to_idx(word[i]); // ← map to 0-40
         uint32_t found = 0;
 
-        // Search the sibling chain under 'current'
         uint32_t child = trie_pool[current].first_child;
-        while (child != 0) {
-            if (trie_pool[child].letter_idx == l_idx) {
-                found = child;
-                break;
-            }
+        while (child) {
+            if (trie_pool[child].letter_idx == l_idx) { found = child; break; }
             child = trie_pool[child].next_sibling;
         }
 
-        // If not found, create the new branch
-        if (!found) {
-            found = create_node(l_idx, current);
-            if (found == 0) return 0; // Allocation/Pruning failed
-        } else {
-            // Word exists path-wise; increment frequency for the Structural Plane
-            if (trie_pool[found].total_frequency < 255) {
-                trie_pool[found].total_frequency++;
-            }
-        }
+        if (!found) found = create_node(l_idx, current);
+        else if (trie_pool[found].total_frequency < 255) trie_pool[found].total_frequency++;
+
         current = found;
     }
 
-    // Mark the final node as a valid terminal word
-    trie_pool[current].is_word = 1; 
+    trie_pool[current].is_word = 1;
     return current;
 }
 
@@ -487,37 +472,62 @@ void print_all_words_recursive(uint32_t node_idx, char *buffer, int depth) {
 
     CompactNode *node = &trie_pool[node_idx];
 
+    buffer[depth] = idx_to_char(node->letter_idx);
+
     if (node->is_word) {
-        buffer[depth] = '\0';
+        buffer[depth + 1] = '\0';
         printf("%s | ", buffer);
     }
 
-    // Alphabetical Search: Look for indices 0 through 39 in order
-    for (uint8_t i = 0; i <= 39; i++) {
-        uint32_t child_idx = node->first_child;
-        while (child_idx != 0) {
-            if (trie_pool[child_idx].letter_idx == i) {
-                buffer[depth] = idx_to_char(i);
-                print_all_words_recursive(child_idx, buffer, depth + 1);
-                break; // Found this index, move to the next 'i'
-            }
-            child_idx = trie_pool[child_idx].next_sibling;
-        }
+    uint32_t child = node->first_child;
+    while (child != 0) {
+        print_all_words_recursive(child, buffer, depth + 1);
+        child = trie_pool[child].next_sibling;
     }
 }
 
-
 void print_all_words(void) {
-    char buffer[256]; 
-    printf("\n" BOLD WHITE "--- Knowledge Base Vocabulary ---" RESET "\n");
-    
-    // Start from root (index 0) children to catch all possible starts
-    uint32_t root_child = trie_pool[0].first_child;
-    while (root_child != 0) {
-        buffer[0] = idx_to_char(trie_pool[root_child].letter_idx);
-        print_all_words_recursive(root_child, buffer, 1);
-        root_child = trie_pool[root_child].next_sibling;
+    char buffer[256];
+    printf("\n--- Knowledge Base Vocabulary ---\n");
+
+    uint32_t child = trie_pool[0].first_child; // root children
+    while (child != 0) {
+        print_all_words_recursive(child, buffer, 0);
+        child = trie_pool[child].next_sibling;
     }
+
+    printf("\n---------------------------------\n");
+}
+
+void print_trie_ids_recursive(uint32_t node_idx, char *buffer, int depth) {
+    if (node_idx == 0 || node_idx >= nodes_count) return;
+
+    CompactNode *node = &trie_pool[node_idx];
+    
+    buffer[depth] = idx_to_char(node->letter_idx);
+    
+    if (node->is_word) {
+        buffer[depth + 1] = '\0';
+        printf("[%u] %s | ", node_idx, buffer); // print node ID + word
+    }
+
+    uint32_t child = node->first_child;
+    while (child != 0) {
+        print_trie_ids_recursive(child, buffer, depth + 1);
+        child = trie_pool[child].next_sibling;
+    }
+}
+
+void print_trie_ids(void) {
+    char buffer[256];
+    printf("\n--- Trie Words with IDs ---\n");
+
+    uint32_t child = trie_pool[0].first_child; // root children
+    while (child != 0) {
+        print_trie_ids_recursive(child, buffer, 0);
+        child = trie_pool[child].next_sibling;
+    }
+
     printf("\n---------------------------------\n");
 }
 

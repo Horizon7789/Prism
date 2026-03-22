@@ -175,6 +175,7 @@ static char **fetch_linked_titles(const char *subject, size_t *out_count) {
    Returns number of tokens trained.
    ================================================================ */
 
+
 int train_from_string(const char *text) {
     if (!text || !text[0]) return 0;
 
@@ -236,7 +237,6 @@ int train_from_file(const char *filepath) {
     printf(GREEN "PRISM: Trained %d tokens from %s" RESET "\n", tokens, filepath);
     return tokens;
 }
-
 
 /* ================================================================
    HANDLE QUERY  (wired training)
@@ -352,55 +352,77 @@ static void clear_visited(void) {
     }
 }
 
+
 void deep_crawl(const char *seed_topic, int seconds) {
     if (!seed_topic || !seed_topic[0]) return;
     if (seconds <= 0) seconds = 300;
 
+    PRISM_ABORT = 0;
+
     time_t start    = time(NULL);
     time_t deadline = start + seconds;
 
-    int  pages_done  = 0;
-    int  total_tokens = 0;
+    int pages_done   = 0;
+    int total_tokens = 0;
 
     CrawlQueue q;
     queue_init(&q);
     clear_visited();
 
-    queue_push(&q, seed_topic);
+    queue_push(&q, strdup(seed_topic));
 
     printf(BOLD CYAN
            "\nPRISM: Deep crawl starting — topic: '%s' — %d seconds\n"
+           "Press Ctrl+C to safely stop and save.\n"
            RESET, seed_topic, seconds);
 
     while (q.size > 0 && time(NULL) < deadline) {
+
+        if (PRISM_ABORT) {
+            printf(YELLOW "\n[!] Crawl cancelled by user. Saving progress...\n" RESET);
+            break;
+        }
+
         char *topic = queue_pop(&q);
         if (!topic) break;
 
-        if (was_visited(topic)) { free(topic); continue; }
+        if (was_visited(topic)) {
+            free(topic);
+            continue;
+        }
         mark_visited(topic);
 
         time_t remaining = deadline - time(NULL);
-        printf(CYAN "  [%3d pages | %3ld s left] Fetching: %s\n" RESET,
+        if (remaining < 0) remaining = 0;
+
+        printf(CYAN "  [%3d pages | %3ld s left] %s\n" RESET,
                pages_done, remaining, topic);
 
-        /* 1. Fetch and train the article text */
+        /* --- 1. Fetch and train --- */
         char *text = fetch_wikipedia(topic);
-        if (text) {
+        if (text && text[0]) {
             int tok = train_from_string(text);
-            total_tokens += tok;
+            if (tok > 0) total_tokens += tok;
             free(text);
         }
 
-        /* 2. Fetch linked articles and queue them */
-        if (time(NULL) < deadline) {
-            size_t  link_count = 0;
-            char  **links      = fetch_linked_titles(topic, &link_count);
+        /* --- 🔥 SAVE AFTER EVERY PAGE --- */
+        save_trie("lexical_trie.bin");
+
+        /* --- 2. Expand links --- */
+        if (!PRISM_ABORT && time(NULL) < deadline) {
+            size_t link_count = 0;
+            char **links = fetch_linked_titles(topic, &link_count);
 
             if (links) {
                 for (size_t i = 0; i < link_count; i++) {
-                    if (links[i] && !was_visited(links[i]))
-                        queue_push(&q, links[i]);
-                    free(links[i]);
+                    if (!links[i]) continue;
+
+                    if (!was_visited(links[i])) {
+                        queue_push(&q, links[i]); // transfer ownership
+                    } else {
+                        free(links[i]);
+                    }
                 }
                 free(links);
             }
@@ -410,18 +432,20 @@ void deep_crawl(const char *seed_topic, int seconds) {
         free(topic);
     }
 
-    /* Clean up */
+    /* --- FINAL SAVE (important) --- */
+    save_trie("lexical_trie.bin");
+
+    /* --- CLEANUP --- */
     queue_free(&q);
     clear_visited();
 
-    /* Persist everything */
-    save_trie("lexical_trie.bin");
-
     printf(BOLD GREEN
-           "\nPRISM: Crawl complete.\n"
+           "\nPRISM: Crawl finished.\n"
            "  Pages trained : %d\n"
            "  Total tokens  : %d\n"
            "  Time taken    : %ld seconds\n"
            RESET,
-           pages_done, total_tokens, time(NULL) - start);
+           pages_done,
+           total_tokens,
+           time(NULL) - start);
 }

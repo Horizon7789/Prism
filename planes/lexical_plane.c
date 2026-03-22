@@ -1,6 +1,8 @@
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
-    
+#include <stdio.h>
+   
 #include "prism.h"
 
 POSMap pos_map[] = {
@@ -256,15 +258,14 @@ void infer_pos_with_context(uint32_t *ids, size_t idx, size_t start, size_t end)
     if (*curr_mask & POS_LOCKED) return;
 
     // --- SUFFIX HEURISTIC (Adverb Detection) ---
-    char *word = get_word_by_id(curr_id);
-    if (word) {
+    char word[64];
+    build_word_from_id(curr_id, word, sizeof(word));
+
         size_t len = strlen(word);
         if (len > 2 && strcmp(&word[len-2], "ly") == 0) {
             *curr_mask |= POS_ADV;
             *curr_mask &= ~POS_NOUN; // Strip Noun; "mostly" is not a person/place/thing
         }
-        free(word); 
-    }
 
     // --- LOOK BACK (History) ---
     if (idx > start) {
@@ -415,9 +416,11 @@ void debug_show_phrases(void) {
     for (uint32_t i = 0; i < nodes_count; i++) {
         if (!(trie_pool[i].pos_mask & POS_DET)) continue;
 
-        char *det_str = get_word_by_id(i);
+        char det_str[2];
+        det_str[0] = idx_to_char(i);
+        det_str[1] = '\0';
+
         StructuralEntry *entry = get_structural_entry(i);
-        if (!entry) { if (det_str) free(det_str); continue; }
 
         TransitionNode *t = entry->transitions;
         while (t) {
@@ -426,7 +429,9 @@ void debug_show_phrases(void) {
 
             uint32_t next_id = t->target_id;
             uint16_t next_mask = trie_pool[next_id].pos_mask;
-            char *next_str = get_word_by_id(next_id);
+            
+            char next_str[64];
+            build_word_from_id(next_id, next_str, sizeof(next_str));
             
             if (next_mask & POS_ADJ) {
                 StructuralEntry *adj_entry = get_structural_entry(next_id);
@@ -441,11 +446,10 @@ void debug_show_phrases(void) {
                             (noun_mask & POS_NOUN) && 
                             !(noun_mask & (POS_STOP | POS_AUX | POS_DET))) {
                             
-                            char *noun_str = get_word_by_id(n->target_id);
+                            char noun_str[64];
+build_word_from_id(n->target_id, noun_str, sizeof(noun_str));
                             printf(CYAN "  [ADJ-P] " RESET "%-5s %-15s %-15s (Str: %d)\n", 
                                    det_str, next_str, noun_str, n->frequency);
-                            
-                            if (noun_str) free(noun_str);
                         }
                         n = n->next;
                     }
@@ -454,11 +458,9 @@ void debug_show_phrases(void) {
                 printf(GREEN "  [NP]    " RESET "%-5s %-15s (Str: %d)\n", det_str, next_str, t->frequency);
                 
             }
-
-            if (next_str) free(next_str);
             t = t->next;
         }
-        if (det_str) free(det_str);
+        
     }
 }
 
@@ -515,68 +517,78 @@ void update_co_occurrence(uint32_t *window, int current_idx) {
 }
 
 
+
 void train_prism_planes(uint32_t *ids, size_t count, int silent) {
     if (!ids || count < 2) return;
 
     for (size_t i = 0; i < count; i++) {
         uint32_t current_id = ids[i];
+        if (current_id == 0 || current_id >= nodes_count) continue;
 
-        // 0. SAFETY: Bounds check for current node
-        if (current_id >= nodes_count) continue; 
+        // --- 0. Build word string ---
+        char word[128];
+        build_word_from_id(current_id, word, sizeof(word));
 
-        // 1. CONTEXTUAL INFERENCE (Window of 6-8 words)
-        // We look ahead and behind to set POS bits accurately
+        // --- 1. Launch background POS worker ---
+        PosJob *job = malloc(sizeof(PosJob));
+        if (job) {
+            job->node_id = current_id;
+            strncpy(job->word, word, sizeof(job->word)-1);
+            job->word[sizeof(job->word)-1] = '\0';
+
+            pthread_t tid;
+            if (pthread_create(&tid, NULL, pos_worker, job) == 0) {
+                pthread_detach(tid); // Run in background
+            } else {
+                free(job); // Failed to launch
+            }
+        }
+
+        // --- 2. CONTEXTUAL INFERENCE (window of 3 before/after) ---
         size_t window_start = (i > 3) ? i - 3 : 0;
-        size_t window_end = (i + 3 < count) ? i + 3 : count - 1;
-        
+        size_t window_end   = (i + 3 < count) ? i + 3 : count - 1;
+
         for (size_t j = i; j <= window_end; j++) {
-    if (trie_pool[ids[j]].pos_mask & POS_STOP) {
-        window_end = j; 
-        break;
-    }
-}
-      
-        // This function now handles the "Copula Check" and "POS_LOCKED" guards
+            if (trie_pool[ids[j]].pos_mask & POS_STOP) {
+                window_end = j;
+                break;
+            }
+        }
+
         infer_pos_with_context(ids, i, window_start, window_end);
 
-        // 2. STRUCTURAL WEAVING (Short-term Transitions)
+        // --- 3. STRUCTURAL WEAVING (Short-term transitions) ---
         if (i > 0) {
             uint32_t prev_id = ids[i-1];
             if (prev_id < nodes_count) {
-                // Record how grammar bits flow (e.g., Noun -> Verb)
                 record_grammar_path(trie_pool[prev_id].pos_mask, trie_pool[current_id].pos_mask);
-                // Record the raw word-to-word transition
                 record_transition(prev_id, current_id);
             }
         }
 
-        // 3. STRUCTURAL PRESSURE (Contextual Refinement)
+        // --- 4. STRUCTURAL PRESSURE (Contextual refinement) ---
         if (i > 0 && i < count - 1) {
             if (ids[i-1] < nodes_count && ids[i+1] < nodes_count) {
                 apply_structural_pressure(ids, (int)i);
             }
         }
 
-        // 4. REASONING PLANE (Long-term Symmetric Co-occurrence)
-        // Only link semantically "heavy" words (Nouns, Verbs, Adjectives)
+        // --- 5. REASONING PLANE (Long-term co-occurrence) ---
         uint16_t current_mask = trie_pool[current_id].pos_mask;
         if (current_mask & (POS_NOUN | POS_VERB | POS_ADJ)) {
-            // Check previous 64 tokens for meaningful associations
             size_t co_start = (i > 64) ? i - 64 : 0;
             for (size_t j = co_start; j < i; j++) {
                 uint32_t past_id = ids[j];
-                
                 if (past_id < nodes_count) {
                     uint16_t past_mask = trie_pool[past_id].pos_mask;
                     if (past_mask & (POS_NOUN | POS_VERB | POS_ADJ)) {
-                        // Strengthen the logical bond between these two concepts
                         increment_co_link(past_id, current_id);
                     }
                 }
             }
         }
     }
-    
+
     if (!silent) {
         printf(GREEN "PRISM: All Planes (Lexical, Structural, Reasoning) Hydrated." RESET "\n");
     }
@@ -639,7 +651,8 @@ void print_structural_patterns(const char *target_word) {
     
     TransitionNode *t = entry->transitions;
     while (t) {
-        char *word = get_word_by_id(t->target_id);
+        char word[64];
+        build_word_from_id(t->target_id, word, sizeof(word));
         uint16_t mask = trie_pool[t->target_id].pos_mask;
 
         // Determine the Role String
@@ -650,9 +663,8 @@ void print_structural_patterns(const char *target_word) {
         if (mask & POS_VERB) strcat(role, "VERB ");
 
         printf("  + [%-12s] -> " CYAN "%-12s" RESET " | Count: %-2u | Role: %s\n", 
-               target_word, word ? word : "???", t->frequency, role);
+               target_word, word, t->frequency, role);
 
-        if (word) free(word);
         t = t->next;
     }
     printf("------------------------------------------\n");

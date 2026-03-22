@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
     
 #include "prism_grammar.h"
 
@@ -14,6 +15,8 @@
 #define STRUCTURAL_BUCKETS 16384
 #define HASH_SIZE 16384 
 #define POS_LOCKED 0x8000
+
+extern volatile sig_atomic_t PRISM_ABORT;
 
 /* COLORS */
 
@@ -46,6 +49,13 @@ extern int PRISM_SILENT;
 #define MAX_FREE_SLOTS 10000
 extern uint32_t free_slots[MAX_FREE_SLOTS];
 extern uint32_t free_ptr; // Points to the next available recycled index
+
+void* pos_worker(void* arg);
+
+typedef struct {
+    uint32_t node_id;
+    char     word[128];
+} PosJob;
 
 typedef struct {
     uint32_t first_child;  
@@ -250,10 +260,7 @@ int is_id_sentence_ender(uint32_t id);
 char* reconstruct_word_from_edges(WordEdges *we, char start_letter);
 void replay_history(int limit);
 void replay_specific(const char *target_word);
-
-
-// Climbs the Trie from a leaf ID to the root to reconstruct the string
-char* get_word_by_id(uint32_t node_idx);
+void build_word_from_id(uint32_t id, char *buffer, size_t max_len);
 
 // Helper to convert indices back to characters (updated for punctuation)
 char idx_to_char(uint8_t idx);
@@ -298,6 +305,16 @@ void debug_show_phrases(void);
 void force_re_lock_lexicon(void);
 void reset_pos_planes(void);
 void prune_structural_noise(void);
+void print_trie_ids(void);
+void print_trie_ids_recursive(uint32_t node_idx, char *buffer, int depth);
+void* pos_worker(void* arg);
+
+void auto_train_seed(uint32_t seed_id, const char *seed);
+uint32_t pick_random_anchor(void);
+void generate_multi_sentence(const char *seed, int target_sentences);
+int has_outgoing_edges(uint32_t word_id);
+void assign_hybrid_pos(uint32_t node_id);
+uint16_t fetch_online_pos(const char *word);
 
 /* Convert index 0-25 back to letter 'a'-'z' */
 static inline int letter_to_index(char c) {

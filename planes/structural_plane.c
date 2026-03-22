@@ -173,69 +173,20 @@ void train_structural_plane(uint32_t *ids, size_t count) {
     printf(GREEN "PRISM trained Successfully" RESET);
 }
 
-/* void generate_multi_sentence(const char *seed, int target_sentences) {
-    uint32_t seed_id = insert_word(seed); 
-    if (seed_id == 0) {
-        printf(RED "PRISM: Seed word not found." RESET "\n");
-        return;
-    }
-
-    uint32_t current_id = seed_id;
-    uint32_t subject_id = seed_id; // The context anchor
-    int sentences_count = 0;
-    int max_words = 150; 
-    int word_count = 0;
-
-    printf(BOLD "\nPRISM> " RESET "%s ", seed);
-
-    while (sentences_count < target_sentences && word_count < max_words) {
-        // Now passing both current word and the subject anchor
-        uint32_t next_id = predict_next_id(current_id, subject_id);
-        
-        if (next_id == 0) {
-            printf(" [End of Path]");
-            break;
-        }
-
-        char *word = get_word_by_id(next_id);
-        if (word) {
-            // Check if the word is a stop token (., !, ?)
-            uint8_t l_idx = trie_pool[next_id].letter_idx;
-            
-            if (l_idx >= 36 && l_idx <= 39) {
-                printf("%s", word); // No space before punctuation
-                sentences_count++;
-            } else {
-                printf(" %s", word); // Space before normal words
-            }
-            
-            free(word);
-        }
-
-        current_id = next_id;
-        word_count++;
-    }
-    printf("\n");
-}
-
-*/
-
 
 void replay_with_structure(uint32_t *history_ids, size_t count) {
     int capitalize_next = 1;
 
     for (size_t i = 0; i < count; i++) {
-        char *word = get_word_by_id(history_ids[i]);
-        if (!word) continue;
+        uint32_t id = history_ids[i];
 
-        // 1. Structural Check: Did we miss a comma?
-        // If the frequency of (Current -> Comma) is > 70% of total occurrences
-        // we can safely assume a structural break belongs here.
-        
+        char word[64];
+        build_word_from_id(id, word, sizeof(word));
+
         // 2. Formatting based on ID type
         if (capitalize_next && isalpha(word[0])) {
-            word[0] = toupper(word[0]);
-            capitalize_next = 0;
+            word[0] = toupper((unsigned char)word[0]);
+                capitalize_next = 0;
         }
 
         printf("%s", word);
@@ -251,8 +202,6 @@ void replay_with_structure(uint32_t *history_ids, size_t count) {
             printf("\n");
             capitalize_next = 1;
         }
-
-        free(word);
     }
 }
 
@@ -285,8 +234,8 @@ void inspect_word_context(const char *target_word) {
     TransitionNode *curr = entry->transitions;
 while (curr) {
     // 1. Reconstruct the string from the Trie ID
-    char *decoded = get_word_by_id(curr->target_id);
-    
+    char decoded[64];
+    build_word_from_id(curr->target_id, decoded, sizeof(decoded));
     // 2. Calculate probability based on the total occurrences for this source
     float probability = 0.0f;
     if (entry->total_occurrences > 0) {
@@ -294,8 +243,8 @@ while (curr) {
     }
 
     // 3. Print the formatted output using the decoded word
-    // We handle the case where get_word_by_id might return NULL
-    const char *display_word = (decoded) ? decoded : "???";
+    // We handle the case where idx_to_char might return NULL
+    const char *display_word = decoded;
 
     printf("  -> " CYAN "[ID:%-4u] %-14s" RESET " | Count: %-3u | Prob: " GREEN "%5.1f%%" RESET "\n", 
            curr->target_id, 
@@ -303,11 +252,6 @@ while (curr) {
            curr->frequency, 
            probability);
 
-    // 4. CRITICAL: Free the string AFTER printing, then move to next node
-    if (decoded) {
-        free(decoded);
-    }
-    
     curr = curr->next;
 }
 
@@ -329,3 +273,4 @@ void clear_structural_matrix(void) {
         }
     }
 }
+
